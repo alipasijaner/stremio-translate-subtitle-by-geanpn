@@ -1,6 +1,5 @@
 const {
   addonBuilder,
-  serveHTTP,
   publishToCentral,
 } = require("stremio-addon-sdk");
 const opensubtitles = require("./opensubtitles");
@@ -28,7 +27,6 @@ const builder = new addonBuilder({
   version: "1.0.2",
   name: "Auto Subtitle Translate by geanpn",
   logo: "./subtitles/logo.webp",
-  configurable: true,
   behaviorHints: {
     configurable: true,
     configurationRequired: true,
@@ -36,56 +34,25 @@ const builder = new addonBuilder({
   config: [
     {
       key: "provider",
-      title: "Provider",
       type: "select",
-      required: true,
       options: ["Google Translate", "ChatGPT API"],
     },
     {
+      key: "translateto",
+      type: "select",
+      options: baseLanguages,
+    },
+    {
       key: "apikey",
-      title: "ChatGPT API Key",
       type: "text",
-      required: false,
-      dependencies: [
-        {
-          key: "provider",
-          value: ["ChatGPT API"],
-        },
-      ],
     },
     {
       key: "base_url",
-      title: "ChatGPT API Base URL",
       type: "text",
-      required: false,
-      default: "https://api.openai.com/v1/responses",
-      dependencies: [
-        {
-          key: "provider",
-          value: ["ChatGPT API"],
-        },
-      ],
     },
     {
       key: "model_name",
-      title: "ChatGPT API Model Name",
       type: "text",
-      required: false,
-      default: "gpt-4o-mini",
-      dependencies: [
-        {
-          key: "provider",
-          value: ["ChatGPT API"],
-        },
-      ],
-    },
-    {
-      key: "translateto",
-      title: "Translate to",
-      type: "select",
-      required: true,
-      default: "English",
-      options: baseLanguages,
     },
   ],
   description:
@@ -339,20 +306,53 @@ if (process.env.PUBLISH_IN_STREMIO_STORE == "TRUE") {
 
 const port = process.env.PORT || 3000;
 const address = process.env.ADDRESS || "0.0.0.0";
+const fs = require("fs");
+const express = require("express");
+const cors = require("cors");
+const getRouter = require("stremio-addon-sdk/src/getRouter");
 
-serveHTTP(builder.getInterface(), {
-  cacheMaxAge: 10,
-  port: port,
-  address: address,
-  static: "/subtitles",
-})
-  .then(() => {
-    console.log(`Server started: http://${address}:${port}`);
-    console.log(
-      "Manifest available:",
-      `http://${address}:${port}/manifest.json`
-    );
-  })
-  .catch((error) => {
-    console.error("Server startup error:", error);
+const app = express();
+
+app.use(cors());
+
+app.use((_, res, next) => {
+  res.setHeader("Cache-Control", "max-age=10, public");
+  next();
+});
+
+app.get("/", (_, res) => {
+  res.redirect("/configure");
+});
+
+app.get("/configure", (_req, res) => {
+  fs.readFile("./configure.html", "utf8", (err, data) => {
+    if (err) {
+      res.status(500).send("Error loading configuration page");
+      return;
+    }
+
+    const html = data
+      .replace("<%= languages %>", JSON.stringify(baseLanguages))
+      .replace(
+        "<%= baseUrl %>",
+        process.env.BASE_URL || `http://${address}:${port}`
+      );
+
+    res.setHeader("Content-Type", "text/html");
+    res.send(html);
   });
+});
+
+app.use("/subtitles", express.static("subtitles"));
+
+app.use(getRouter(builder.getInterface()));
+
+const server = app.listen(port, address, () => {
+  console.log(`Server started: http://${address}:${port}`);
+  console.log("Manifest available:", `http://${address}:${port}/manifest.json`);
+  console.log("Configuration:", `http://${address}:${port}/configure`);
+});
+
+server.on("error", (error) => {
+  console.error("Server startup error:", error);
+});
